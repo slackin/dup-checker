@@ -75,6 +75,64 @@ int calculate_sha256_hash(const char *filename, unsigned char hash[]) {
     return 0;
 }
 
+int countfiles(char *path) {
+    DIR *dir_ptr = NULL;
+    struct dirent *direntp;
+    char *npath;
+    if (!path) return 0;
+    if( (dir_ptr = opendir(path)) == NULL ) return 0;
+
+    int count=0;
+    while( (direntp = readdir(dir_ptr)))
+    {
+        if (strcmp(direntp->d_name,".")==0 ||
+            strcmp(direntp->d_name,"..")==0) continue;
+        switch (direntp->d_type) {
+            case DT_REG:
+                ++count;
+                break;
+            case DT_DIR:            
+                npath=malloc(strlen(path)+strlen(direntp->d_name)+2);
+                sprintf(npath,"%s/%s",path, direntp->d_name);
+                count += countfiles(npath);
+                free(npath);
+                break;
+        }
+    }
+    closedir(dir_ptr);
+    return count;
+}
+
+int countdirs(char *path){
+    DIR *dir = NULL;
+    struct dirent *entry;
+    char *npath;
+    int count = 0;
+
+    if (!(dir = opendir(path))) {  
+        perror ("opendir-path not found");
+        return 0;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {  
+        char *name = entry->d_name;
+        if (entry->d_type == DT_DIR) {
+            if (!strcmp(name, ".") || !strcmp(name, ".."))
+                continue;
+            count++;
+            npath=malloc(strlen(path)+strlen(entry->d_name)+2);
+            sprintf(npath,"%s/%s",path, entry->d_name);
+            count += countdirs(npath);
+            free(npath);
+            //snprintf (path1, 100, "%s/%s\n", path, name);
+            //printf("%s", path1);
+        }
+    }
+    //printf("\nCounted: %u subdirectories.\n", count);
+    closedir (dir); 
+    return count;
+}
+
 int main(int argc, char *argv[]) {
     char debug_s[1024] = "";
     char *dir_path;
@@ -82,8 +140,7 @@ int main(int argc, char *argv[]) {
     struct dirent *entry;
     struct stat statbuf;
     int file_limit = 800000;
-    int i = 0, d = 0, j = 0, g = 0, num_files = 0, num_duplicates = 0, num_dirs = 0;
-    file_info_t** file_info = (file_info_t**) malloc(file_limit * sizeof(struct file_info));
+    int i = 0, d = 0, j = 0, g = 0, total_dirs = 0, total_files = 0, num_files = 0, num_duplicates = 0, num_dirs = 0;
     if (argc < 2) {
         printf("Usage: %s directory_path\n", argv[0]);
         exit(EXIT_FAILURE);
@@ -114,9 +171,17 @@ int main(int argc, char *argv[]) {
         perror("opendir");
         exit(EXIT_FAILURE);
     }
+    
+    total_files = countfiles(dir_path);
+    total_dirs = countdirs(dir_path);
+    printf("Total dirs found %d\n", total_dirs);
+    printf("Total files found %d\n", total_files);
+    
+    file_info_t** file_info = (file_info_t**) malloc(total_files * sizeof(struct file_info) + 1);
+
     // Allocate memory for sub_dir
-    char** sub_dir = (char**) malloc(file_limit * MAX_FILENAME_LEN * sizeof(char*));
-    for (int i = 0; i < file_limit; i++) {
+    char** sub_dir = (char**) malloc(total_dirs * MAX_FILENAME_LEN * sizeof(char*) + 1);
+    for (int i = 0; i < total_dirs; i++) {
         sub_dir[i] = (char*) malloc(MAX_FILENAME_LEN * sizeof(char));
     }
     while ((entry = readdir(dir)) != NULL) {
@@ -133,45 +198,24 @@ int main(int argc, char *argv[]) {
             file_info[num_files]->filename = strdup(entry->d_name);
             file_info[num_files]->filesize = statbuf.st_size;
             file_info[num_files]->dirpath = dir_path;
-            sprintf(debug_s, "HASHING: %s", file_info[num_files]->filename);
-            debug_output(debug_s);
-            sprintf(debug_s, "TYPE: %d  HASHING: %s/%s", entry->d_type, dir_path, file_info[num_files]->filename);
-            debug_output(debug_s);
-            /* SHA 256 HASH
-            if (calculate_sha256_hash(path, file_info[num_files]->hash) == -1) {
-                printf("Failed to calculate hash for %s\n", entry->d_name);
-            }
-            */
             num_files++;
         } else if (S_ISDIR(statbuf.st_mode) && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
             snprintf(sub_dir[num_dirs], MAX_FILENAME_LEN, "%s/%s", dir_path, entry->d_name);
 	    num_dirs++;
-            sprintf(debug_s, "NUM: %d  DIR: %s", num_dirs, sub_dir[num_dirs]);
-            debug_output(debug_s);
         } else {
     	    char entry_d_name_string[255];
     	    sprintf(entry_d_name_string, "TYPE: %d  ERROR (FS TYPE CHECK): %s", entry->d_type, entry->d_name);
     	    debug_output(entry_d_name_string);
     	}
     }
-    sprintf(debug_s, "NUM_DIRS: %i", num_dirs);
-    debug_output(debug_s);
     closedir(dir);
-    debug_output("BREAK 1");
     while (d < num_dirs) {
-	debug_output("BREAK 5");
-        sprintf(debug_s, "DIR: %i  SUB_DIR: %s", d, sub_dir[d]);
-        debug_output(debug_s);
         dir_path = sub_dir[d];
-        sprintf(debug_s, "DIR_PATH: %s", dir_path);
-        debug_output(debug_s);
         if ((dir = opendir(dir_path)) == NULL) {
             debug_output("ERROR, opendir");
         }
         while ((entry = readdir(dir)) != NULL) {
             char path[MAX_FILENAME_LEN];
-            sprintf(debug_s, "PATH: %s DIR_PATH: %s", path, dir_path);
-	    debug_output(debug_s);
             snprintf(path, MAX_FILENAME_LEN, "%s/%s", dir_path, entry->d_name);
             if (lstat(path, &statbuf) == -1) {
                 sprintf(debug_s, "ERROR, lstat; PATH: %s", path);
@@ -183,20 +227,10 @@ int main(int argc, char *argv[]) {
                 file_info[num_files]->filename = strdup(entry->d_name);
                 file_info[num_files]->filesize = statbuf.st_size;
                 file_info[num_files]->dirpath = dir_path;
-                sprintf(debug_s, "NUM_FILES: %d  FILING: %s", num_files, file_info[num_files]->filename);
-                debug_output(debug_s);
                 num_files++;
             } else if (S_ISDIR(statbuf.st_mode) && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-                sprintf(debug_s, "dir_path; %s", dir_path);
-                debug_output(debug_s);
-                sprintf(debug_s, "sub_dir; %s", sub_dir[num_dirs]);
-                debug_output(debug_s);
-                sprintf(debug_s, "d_name; %s", entry->d_name);
-                debug_output(debug_s);
-                sprintf(debug_s, "num_dirs; %d", num_dirs);
-                debug_output(debug_s);
                 snprintf(sub_dir[num_dirs], MAX_FILENAME_LEN, "%s/%s", dir_path, entry->d_name);
-	            num_dirs++;
+	        num_dirs++;
             } else {
     	        char entry_d_name_string[255];
     	        sprintf(entry_d_name_string, "ERROR (FS TYPE CHECK): %s", entry->d_name);
@@ -215,43 +249,24 @@ int main(int argc, char *argv[]) {
 	char file_size_str_b[32];
 	sprintf(file_size_str, "%ld", file_info[i+1]->filesize);
 	sprintf(file_size_str_b, "%ld", file_info[i]->filesize);
-        sprintf(debug_s, "fz_str: %s file; %s/%s", file_size_str, file_info[i+1]->dirpath, file_info[i+1]->filename);
-        debug_output(debug_s);
-        sprintf(debug_s, "fz_str: %s file; %s/%s", file_size_str_b, file_info[i]->dirpath,  file_info[i]->filename);
-        debug_output(debug_s);
-	
-        //if (file_info[i]->filesize == file_info[i+1]->filesize) {
-            file_hash_info[num_duplicates] = (file_hash_info_t *) malloc(sizeof(file_hash_info_t));
-            file_hash_info[num_duplicates]->filename = strdup(file_info[i]->filename);
-            file_hash_info[num_duplicates]->filesize = file_info[i]->filesize;
-            file_hash_info[num_duplicates]->dirpath = file_info[i]->dirpath;
-            sprintf(debug_s, "NUM_DUPS: %d  NEXT: %s/%s", num_duplicates, file_hash_info[num_duplicates]->dirpath, file_hash_info[num_duplicates]->filename);
-            debug_output(debug_s);
-	    // SHA 256 HASH
-            sprintf(debug_s, "HASHING: %s/%s", file_hash_info[num_duplicates]->dirpath, file_hash_info[num_duplicates]->filename);
-            verbose_output(debug_s);
-            snprintf(path, MAX_FILENAME_LEN, "%s/%s", file_hash_info[num_duplicates]->dirpath, file_hash_info[num_duplicates]->filename);
-            if (calculate_sha256_hash(path, file_hash_info[num_duplicates]->hash) == -1) {
-                printf("Failed to calculate hash for %s\n", file_hash_info[num_duplicates]->filename);
-            }
-            
-            num_duplicates++;
-        //}
+        file_hash_info[num_duplicates] = (file_hash_info_t *) malloc(sizeof(file_hash_info_t));
+        file_hash_info[num_duplicates]->filename = strdup(file_info[i]->filename);
+        file_hash_info[num_duplicates]->filesize = file_info[i]->filesize;
+        file_hash_info[num_duplicates]->dirpath = file_info[i]->dirpath;
+        printf("HASHING: %s/%s", file_hash_info[num_duplicates]->dirpath, file_hash_info[num_duplicates]->filename);
+        snprintf(path, MAX_FILENAME_LEN, "%s/%s", file_hash_info[num_duplicates]->dirpath, file_hash_info[num_duplicates]->filename);
+        if (calculate_sha256_hash(path, file_hash_info[num_duplicates]->hash) == -1) {
+            printf("Failed to calculate hash for %s\n", file_hash_info[num_duplicates]->filename);
+        }
+        num_duplicates++;
     }
     for (i = 0; i < num_files; i++) {
         free(file_info[i]->filename);
         free(file_info[i]);
     }
-
     qsort(file_hash_info, num_duplicates, sizeof(file_hash_info_t *), compare_file_hash);
     for (i = 0; i < num_duplicates - 1; i++) {
-        sprintf(debug_s, "NUM_DUPS: %d  I: %d  COMP: %s/%s", num_duplicates, i, file_hash_info[i]->dirpath, file_hash_info[i]->filename);
-        debug_output(debug_s);
         if (memcmp(file_hash_info[i]->hash, file_hash_info[i+1]->hash, SHA256_DIGEST_LENGTH) == 0) {
-    	    sprintf(debug_s, "I: %d  FILE: %s", i, file_hash_info[i]->filename);
-    	    //debug_output(debug_s);
-            sprintf(debug_s, "I: %d  FILE: %s", i+1, file_hash_info[i+1]->filename);
-            //debug_output(debug_s);
             char hash_s[SHA256_HASH_LEN] = "";
             char hash_t[SHA256_HASH_LEN] = "";
 	    for (g = 0; g < SHA256_DIGEST_LENGTH; g++) {
@@ -260,19 +275,14 @@ int main(int argc, char *argv[]) {
 	    }
             char hash_r[SHA256_HASH_LEN] = "";
             char hash_u[SHA256_HASH_LEN] = "";
-	    //printf("%s\n", hash_s);
-
-	    //printf("hash_r; %s\n", hash_r);
 	    for (g = 0; g < SHA256_DIGEST_LENGTH; g++) {
 		sprintf(hash_r, "%02x", file_hash_info[i]->hash[g]);
 		strcat(hash_u, hash_r);
 	    }
-	    //printf("hash_u; %s\n", hash_u);
-	    //printf("%s\n", hash_r);
-            sprintf(debug_s, "HASH: %s  FILE: %s/%s  MATCHES", hash_t, file_hash_info[i+1]->dirpath, file_hash_info[i+1]->filename);
-            verbose_output(debug_s);
-            sprintf(debug_s, "HASH: %s  FILE: %s/%s", hash_u, file_hash_info[i]->dirpath, file_hash_info[i]->filename);
-            verbose_output(debug_s);
+            sprintf(debug_s, "FILE: %s/%s  MATCHES", file_hash_info[i+1]->dirpath, file_hash_info[i+1]->filename);
+            printf("%s\n", debug_s);
+            sprintf(debug_s, "FILE: %s/%s", file_hash_info[i]->dirpath, file_hash_info[i]->filename);
+            printf("%s\n", debug_s);
             if (remove_mode == 1) {
         	char rem_file[MAX_FILENAME_LEN] = "";
         	snprintf(rem_file, MAX_FILENAME_LEN, "%s/%s", file_hash_info[i]->dirpath, file_hash_info[i]->filename);
